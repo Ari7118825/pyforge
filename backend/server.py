@@ -572,43 +572,102 @@ async def ws_output(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
 
-# ─── WebSocket: Terminal (Simulated) ─────────────────────────────────────────
+# ─── WebSocket: Terminal (Real PTY) ─────────────────────────────────────────
 
 @app.websocket("/api/ws/terminal")
 async def ws_terminal(websocket: WebSocket):
+    """Real terminal with PTY - works like SSH!"""
     await websocket.accept()
     
-    proc = await asyncio.create_subprocess_exec(
-        '/bin/bash',
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "TERM": "xterm-256color"}
-    )
+    import pty
+    import select
+    import struct
+    import fcntl
+    import termios
     
-    async def read_output(stream):
+    # Determine shell based on OS
+    if sys.platform == 'win32':
+        # Windows: Use PowerShell
+        shell = ['powershell.exe', '-NoLogo']
+    else:
+        # Linux/Mac: Use bash or sh
+        shell = os.environ.get('SHELL', '/bin/bash')
+        if isinstance(shell, str):
+            shell = [shell]
+    
+    # Fork a PTY
+    pid, fd = pty.fork()
+    
+    if pid == 0:
+        # Child process - execute shell
         try:
+            os.execvp(shell[0], shell)
+        except Exception:
+            sys.exit(1)
+    
+    # Parent process - relay I/O
+    try:
+        # Set terminal size
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+        
+        # Make fd non-blocking
+        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+        
+        async def read_from_pty():
+            """Read from PTY and send to WebSocket"""
+            loop = asyncio.get_event_loop()
             while True:
-                data = await stream.read(4096)
-                if not data:
+                try:
+                    # Wait for data
+                    await loop.run_in_executor(None, lambda: select.select([fd], [], [], 0.1))
+                    data = os.read(fd, 4096)
+                    if not data:
+                        break
+                    await websocket.send_text(data.decode('utf-8', errors='replace'))
+                except OSError:
                     break
-                await websocket.send_text(data.decode('utf-8', errors='replace'))
+                except Exception as e:
+                    logger.error(f"PTY read error: {e}")
+                    break
+        
+        async def write_to_pty():
+            """Read from WebSocket and write to PTY"""
+            while True:
+                try:
+                    data = await websocket.receive_text()
+                    
+                    # Handle terminal resize
+                    if data.startswith('RESIZE:'):
+                        try:
+                            _, rows, cols = data.split(':')
+                            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', int(rows), int(cols), 0, 0))
+                        except Exception:
+                            pass
+                        continue
+                    
+                    # Write data to PTY
+                    os.write(fd, data.encode('utf-8'))
+                except WebSocketDisconnect:
+                    break
+                except Exception as e:
+                    logger.error(f"PTY write error: {e}")
+                    break
+        
+        # Run both tasks
+        await asyncio.gather(
+            read_from_pty(),
+            write_to_pty(),
+            return_exceptions=True
+        )
+    
+    finally:
+        try:
+            os.close(fd)
+            os.kill(pid, signal.SIGTERM)
+            os.waitpid(pid, 0)
         except Exception:
             pass
-    
-    stdout_task = asyncio.create_task(read_output(proc.stdout))
-    stderr_task = asyncio.create_task(read_output(proc.stderr))
-    
-    try:
-        while True:
-            data = await websocket.receive_text()
-            if proc.stdin:
-                proc.stdin.write(data.encode())
-                await proc.stdin.drain()
-    except WebSocketDisconnect:
-        proc.kill()
-        stdout_task.cancel()
-        stderr_task.cancel()
 
 # ─── Include router & middleware ──────────────────────────────────────────────
 
