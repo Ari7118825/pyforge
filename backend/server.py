@@ -1,5 +1,7 @@
 from fastapi import FastAPI, APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import os
@@ -23,6 +25,7 @@ load_dotenv(ROOT_DIR / '.env')
 # Database setup
 DB_PATH = ROOT_DIR.parent / 'data' / 'projects.db'
 CUSTOM_BLOCKS_PATH = ROOT_DIR.parent / 'data' / 'custom_blocks.json'
+FRONTEND_BUILD_PATH = ROOT_DIR.parent / 'frontend' / 'build'
 
 # Ensure data directory exists
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
