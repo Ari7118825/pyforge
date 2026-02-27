@@ -624,3 +624,30 @@ async def startup_db():
     await init_db()
     logger.info(f"Database initialized at {DB_PATH}")
     logger.info(f"Custom blocks storage at {CUSTOM_BLOCKS_PATH}")
+    
+    # Check if frontend build exists
+    if FRONTEND_BUILD_PATH.exists():
+        logger.info(f"✅ Frontend build found at {FRONTEND_BUILD_PATH}")
+        logger.info("🌐 Access the app at: http://localhost:8001")
+    else:
+        logger.warning(f"⚠️ Frontend build not found at {FRONTEND_BUILD_PATH}")
+        logger.warning("Run 'cd frontend && yarn build' to create production build")
+        logger.warning("For now, run frontend separately: cd frontend && yarn start")
+
+# Mount static files (frontend build) - AFTER all API routes
+if FRONTEND_BUILD_PATH.exists():
+    # Serve static files (JS, CSS, images)
+    app.mount("/static", StaticFiles(directory=FRONTEND_BUILD_PATH / "static"), name="static")
+    
+    # Serve index.html for all other routes (SPA routing)
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        # Don't intercept API routes
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+        
+        # Serve index.html for all frontend routes
+        index_path = FRONTEND_BUILD_PATH / "index.html"
+        if index_path.exists():
+            return FileResponse(index_path)
+        raise HTTPException(status_code=404, detail="Frontend not built")
