@@ -16,8 +16,8 @@ av==12.0.0
 bettercam
 screeninfo==0.8.1
 
-# Terminal support
-pywinpty==2.0.13
+# Terminal support (Windows only - optional)
+# pywinpty==2.0.13  # Not available on Linux ARM, handled with fallback
 
 # Audio (Windows only - optional, will fallback if not available)
 # pyaudiowpatch  # Not available on Linux, handled with try/except
