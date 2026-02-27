@@ -32,9 +32,11 @@
 
 - **Node.js** (v18 or higher)
 - **Python** (v3.9 or higher)
-- **Yarn** package manager
+- **Yarn** package manager (`npm install -g yarn`)
 
 ### Installation
+
+**📌 Windows Users:** See [WINDOWS_INSTALL.md](WINDOWS_INSTALL.md) for detailed Windows-specific guide with troubleshooting!
 
 1. **Clone or download this repository**
    ```bash
@@ -55,6 +57,8 @@
    yarn install
    cd ..
    ```
+   
+   **⚠️ Important:** Use `yarn install`, NOT `npm install`! This project requires Yarn for proper dependency resolution.
 
 4. **Start the Application**
 
