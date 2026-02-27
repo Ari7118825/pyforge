@@ -580,82 +580,59 @@ async def ws_output(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
 
-# ─── WebSocket: Terminal (Real PTY) ─────────────────────────────────────────
+# ─── WebSocket: Terminal (Windows Compatible) ────────────────────────────────
 
 @app.websocket("/api/ws/terminal")
 async def ws_terminal(websocket: WebSocket):
-    """Real terminal with PTY - works like SSH!"""
+    """Terminal WebSocket - Windows compatible!"""
     await websocket.accept()
     
     if sys.platform == 'win32':
-        # Windows: Use winpty or ConPTY
-        try:
-            import winpty
-            # Use winpty for Windows PTY
-            proc = winpty.PTY(80, 24)
-            proc.spawn('powershell.exe')
-            
-            async def read_from_pty():
-                loop = asyncio.get_event_loop()
+        # Windows: Use cmd.exe with proper encoding
+        import threading
+        
+        proc = subprocess.Popen(
+            ['cmd.exe'],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            shell=False,
+            bufsize=0,
+            universal_newlines=False
+        )
+        
+        def read_output():
+            """Read from process and send to WebSocket"""
+            try:
                 while True:
-                    try:
-                        data = await loop.run_in_executor(None, proc.read, 4096)
-                        if not data:
-                            break
-                        await websocket.send_text(data)
-                    except Exception as e:
-                        logger.error(f"PTY read error: {e}")
-                        break
-            
-            async def write_to_pty():
-                while True:
-                    try:
-                        data = await websocket.receive_text()
-                        if data.startswith('RESIZE:'):
-                            try:
-                                _, rows, cols = data.split(':')
-                                proc.set_size(int(cols), int(rows))
-                            except Exception:
-                                pass
-                            continue
-                        await asyncio.get_event_loop().run_in_executor(None, proc.write, data)
-                    except WebSocketDisconnect:
-                        break
-                    except Exception as e:
-                        logger.error(f"PTY write error: {e}")
-                        break
-            
-            await asyncio.gather(read_from_pty(), write_to_pty(), return_exceptions=True)
-            proc.close()
-            
-        except ImportError:
-            # Fallback: Use subprocess with PIPE (not ideal but works)
-            proc = await asyncio.create_subprocess_exec(
-                'powershell.exe', '-NoLogo',
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            
-            async def read_output():
-                while True:
-                    data = await proc.stdout.read(4096)
+                    data = proc.stdout.read(1)
                     if not data:
                         break
-                    await websocket.send_text(data.decode('utf-8', errors='replace'))
-            
-            async def write_input():
-                while True:
                     try:
-                        data = await websocket.receive_text()
-                        if not data.startswith('RESIZE:'):
-                            proc.stdin.write(data.encode('utf-8'))
-                            await proc.stdin.drain()
-                    except WebSocketDisconnect:
+                        asyncio.run_coroutine_threadsafe(
+                            websocket.send_text(data.decode('cp437', errors='replace')),
+                            asyncio.get_event_loop()
+                        )
+                    except Exception:
                         break
-            
-            await asyncio.gather(read_output(), write_input(), return_exceptions=True)
+            except Exception:
+                pass
+        
+        # Start output reader thread
+        reader_thread = threading.Thread(target=read_output, daemon=True)
+        reader_thread.start()
+        
+        try:
+            while True:
+                data = await websocket.receive_text()
+                if not data.startswith('RESIZE:'):
+                    proc.stdin.write(data.encode('cp437', errors='replace'))
+                    proc.stdin.flush()
+        except WebSocketDisconnect:
+            pass
+        finally:
             proc.kill()
+            
     else:
         # Linux/Mac: Use PTY
         import pty
@@ -671,13 +648,11 @@ async def ws_terminal(websocket: WebSocket):
         pid, fd = pty.fork()
         
         if pid == 0:
-            # Child process
             try:
                 os.execvp(shell[0], shell)
             except Exception:
                 sys.exit(1)
         
-        # Parent process
         try:
             fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
             fl = fcntl.fcntl(fd, fcntl.F_GETFL)
@@ -694,8 +669,7 @@ async def ws_terminal(websocket: WebSocket):
                         await websocket.send_text(data.decode('utf-8', errors='replace'))
                     except OSError:
                         break
-                    except Exception as e:
-                        logger.error(f"PTY read error: {e}")
+                    except Exception:
                         break
             
             async def write_to_pty():
@@ -712,8 +686,7 @@ async def ws_terminal(websocket: WebSocket):
                         os.write(fd, data.encode('utf-8'))
                     except WebSocketDisconnect:
                         break
-                    except Exception as e:
-                        logger.error(f"PTY write error: {e}")
+                    except Exception:
                         break
             
             await asyncio.gather(read_from_pty(), write_to_pty(), return_exceptions=True)
