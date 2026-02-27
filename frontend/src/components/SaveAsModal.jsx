@@ -5,7 +5,8 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+const API = `${BACKEND_URL}/api`;
 
 export const SaveAsModal = ({ isOpen, onClose, code }) => {
   const [currentPath, setCurrentPath] = useState('/tmp');
