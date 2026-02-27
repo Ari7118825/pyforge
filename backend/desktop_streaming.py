@@ -63,18 +63,18 @@ async def webrtc_offer(offer_data: dict):
     pcs[pc_id] = pc
     
     # Get settings from offer
-    monitor = offer_data.get("monitor", 1)  # 0 = all, 1+ = specific monitor
+    monitor = offer_data.get("monitor", 1)
     fps = offer_data.get("fps", 15)
     
-    # Add screen stream track
-    screen_track = ScreenStreamTrack(monitor_index=monitor, fps=fps)
-    pc.addTrack(screen_track)
-    
-    # Set remote description
+    # Set remote description FIRST
     await pc.setRemoteDescription(RTCSessionDescription(
         sdp=offer_data["sdp"],
         type=offer_data["type"]
     ))
+    
+    # Add screen stream track AFTER setting remote description
+    screen_track = ScreenStreamTrack(monitor_index=monitor, fps=fps)
+    pc.addTrack(screen_track)
     
     # Create answer
     answer = await pc.createAnswer()
