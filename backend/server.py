@@ -584,57 +584,110 @@ async def ws_output(websocket: WebSocket):
 
 @app.websocket("/api/ws/terminal")
 async def ws_terminal(websocket: WebSocket):
-    """Terminal WebSocket - Windows compatible!"""
+    """Terminal WebSocket - Robust, SSH-like, multi-session support"""
     await websocket.accept()
     
     if sys.platform == 'win32':
-        # Windows: Use cmd.exe with proper encoding
-        import threading
-        
-        proc = subprocess.Popen(
-            ['cmd.exe'],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            shell=False,
-            bufsize=0,
-            universal_newlines=False
-        )
-        
-        def read_output():
-            """Read from process and send to WebSocket"""
+        # Windows: Use winpty for proper PTY support
+        try:
+            from winpty import PtyProcess
+            
+            # Start PowerShell for better Windows experience
+            proc = PtyProcess.spawn('powershell.exe', dimensions=(24, 80))
+            
+            async def read_output():
+                """Read from PTY and send to WebSocket"""
+                loop = asyncio.get_event_loop()
+                try:
+                    while proc.isalive():
+                        try:
+                            # Non-blocking read with timeout
+                            data = await loop.run_in_executor(
+                                None, 
+                                lambda: proc.read(1024) if proc.isalive() else None
+                            )
+                            if data:
+                                await websocket.send_text(data)
+                            else:
+                                await asyncio.sleep(0.01)
+                        except Exception:
+                            await asyncio.sleep(0.01)
+                except Exception:
+                    pass
+            
+            async def write_input():
+                """Receive from WebSocket and write to PTY"""
+                try:
+                    while proc.isalive():
+                        data = await websocket.receive_text()
+                        if data.startswith('RESIZE:'):
+                            try:
+                                _, rows, cols = data.split(':')
+                                proc.setwinsize(int(rows), int(cols))
+                            except Exception:
+                                pass
+                        else:
+                            proc.write(data)
+                except WebSocketDisconnect:
+                    pass
+                except Exception:
+                    pass
+            
+            await asyncio.gather(read_output(), write_input(), return_exceptions=True)
+            
+        except ImportError:
+            # Fallback: Use cmd.exe without PTY
+            import threading
+            
+            proc = subprocess.Popen(
+                ['powershell.exe', '-NoLogo', '-NoProfile'],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                shell=False,
+                bufsize=0,
+                universal_newlines=False,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            
+            def read_output():
+                try:
+                    while proc.poll() is None:
+                        data = proc.stdout.read(1024)
+                        if data:
+                            try:
+                                asyncio.run_coroutine_threadsafe(
+                                    websocket.send_text(data.decode('utf-8', errors='replace')),
+                                    asyncio.get_event_loop()
+                                ).result(timeout=1.0)
+                            except Exception:
+                                break
+                except Exception:
+                    pass
+            
+            reader_thread = threading.Thread(target=read_output, daemon=True)
+            reader_thread.start()
+            
             try:
-                while True:
-                    data = proc.stdout.read(1)
-                    if not data:
-                        break
-                    try:
-                        asyncio.run_coroutine_threadsafe(
-                            websocket.send_text(data.decode('cp437', errors='replace')),
-                            asyncio.get_event_loop()
-                        )
-                    except Exception:
-                        break
+                while proc.poll() is None:
+                    data = await websocket.receive_text()
+                    if not data.startswith('RESIZE:'):
+                        proc.stdin.write(data.encode('utf-8', errors='replace'))
+                        proc.stdin.flush()
+            except WebSocketDisconnect:
+                pass
+            finally:
+                proc.kill()
+        finally:
+            try:
+                if 'proc' in locals():
+                    if hasattr(proc, 'terminate'):
+                        proc.terminate()
             except Exception:
                 pass
-        
-        # Start output reader thread
-        reader_thread = threading.Thread(target=read_output, daemon=True)
-        reader_thread.start()
-        
-        try:
-            while True:
-                data = await websocket.receive_text()
-                if not data.startswith('RESIZE:'):
-                    proc.stdin.write(data.encode('cp437', errors='replace'))
-                    proc.stdin.flush()
-        except WebSocketDisconnect:
-            pass
-        finally:
-            proc.kill()
             
     else:
-        # Linux/Mac: Use PTY
+        # Linux/Mac: Use PTY (already robust)
         import pty
         import select
         import struct
@@ -642,19 +695,22 @@ async def ws_terminal(websocket: WebSocket):
         import termios
         
         shell = os.environ.get('SHELL', '/bin/bash')
-        if isinstance(shell, str):
-            shell = [shell]
         
         pid, fd = pty.fork()
         
         if pid == 0:
+            # Child process
             try:
-                os.execvp(shell[0], shell)
+                os.execvp(shell, [shell])
             except Exception:
                 sys.exit(1)
         
+        # Parent process
         try:
+            # Set initial terminal size
             fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+            
+            # Set non-blocking
             fl = fcntl.fcntl(fd, fcntl.F_GETFL)
             fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
             
@@ -662,11 +718,15 @@ async def ws_terminal(websocket: WebSocket):
                 loop = asyncio.get_event_loop()
                 while True:
                     try:
-                        await loop.run_in_executor(None, lambda: select.select([fd], [], [], 0.1))
-                        data = os.read(fd, 4096)
-                        if not data:
-                            break
-                        await websocket.send_text(data.decode('utf-8', errors='replace'))
+                        ready, _, _ = await loop.run_in_executor(
+                            None, 
+                            lambda: select.select([fd], [], [], 0.1)
+                        )
+                        if ready:
+                            data = os.read(fd, 4096)
+                            if not data:
+                                break
+                            await websocket.send_text(data.decode('utf-8', errors='replace'))
                     except OSError:
                         break
                     except Exception:
@@ -679,11 +739,12 @@ async def ws_terminal(websocket: WebSocket):
                         if data.startswith('RESIZE:'):
                             try:
                                 _, rows, cols = data.split(':')
-                                fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', int(rows), int(cols), 0, 0))
+                                fcntl.ioctl(fd, termios.TIOCSWINSZ, 
+                                          struct.pack('HHHH', int(rows), int(cols), 0, 0))
                             except Exception:
                                 pass
-                            continue
-                        os.write(fd, data.encode('utf-8'))
+                        else:
+                            os.write(fd, data.encode('utf-8'))
                     except WebSocketDisconnect:
                         break
                     except Exception:
