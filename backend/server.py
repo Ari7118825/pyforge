@@ -19,6 +19,14 @@ import uuid
 from datetime import datetime, timezone
 import aiosqlite
 
+# Import desktop streaming router
+try:
+    from backend.desktop_streaming import desktop_router
+    DESKTOP_AVAILABLE = True
+except ImportError:
+    DESKTOP_AVAILABLE = False
+    logging.warning("Desktop streaming not available - install: pip install aiortc mss numpy pillow pyautogui av")
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
