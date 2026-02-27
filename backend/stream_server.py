@@ -20,12 +20,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 # Import with fallbacks
-try:
-    import bettercam
-    BETTERCAM_AVAILABLE = True
-except ImportError:
-    BETTERCAM_AVAILABLE = False
-    import mss
+BETTERCAM_AVAILABLE = False  # Not available on Linux
+import mss
 
 try:
     import pyaudiowpatch as pyaudio
@@ -75,13 +71,10 @@ class UncappedStreamTrack(VideoStreamTrack):
     def _capture_loop(self):
         while self._running:
             try:
-                if BETTERCAM_AVAILABLE:
-                    frame = self.camera.get_latest_frame()
-                else:
-                    # Fallback to mss
-                    monitor = self.camera.monitors[self.monitor_idx]
-                    screenshot = self.camera.grab(monitor)
-                    frame = np.array(screenshot)[:, :, :3]
+                # Use mss for screen capture (cross-platform)
+                monitor = self.camera.monitors[self.monitor_idx + 1]  # +1 because monitors[0] is all monitors
+                screenshot = self.camera.grab(monitor)
+                frame = np.array(screenshot)[:, :, :3]  # Convert BGRA to BGR
                     
                 if frame is not None:
                     self._latest_frame = frame
@@ -123,7 +116,7 @@ class UncappedStreamTrack(VideoStreamTrack):
 class StreamServerState:
     def __init__(self):
         self.pcs: Set[RTCPeerConnection] = set()
-        self.camera = None
+        self.camera = mss.mss()  # Always use mss on Linux
         self.track = None
         self.current_monitor_idx = 0
         
@@ -256,11 +249,7 @@ async def handle_offer(data: dict):
     state.pcs.add(pc)
     
     if state.camera is None:
-        if BETTERCAM_AVAILABLE:
-            state.camera = bettercam.create(output_idx=state.current_monitor_idx, output_color="BGR")
-            state.camera.start(target_fps=0)
-        else:
-            state.camera = mss.mss()
+        state.camera = mss.mss()
     
     if state.track is None:
         state.track = UncappedStreamTrack(state.camera, state.current_monitor_idx)
@@ -281,21 +270,8 @@ async def set_monitor_and_recreate(monitor_id: int):
         state.track.stop()
         state.track = None
     
-    if state.camera:
-        try:
-            if BETTERCAM_AVAILABLE:
-                state.camera.stop()
-        except:
-            pass
-        state.camera = None
-        await asyncio.sleep(0.5)
-    
-    if BETTERCAM_AVAILABLE:
-        state.camera = bettercam.create(output_idx=monitor_id, output_color="BGR")
-        state.camera.start(target_fps=0)
-    else:
-        state.camera = mss.mss()
-    
+    # mss doesn't need to be recreated, just update track
+    await asyncio.sleep(0.2)
     state.track = UncappedStreamTrack(state.camera, monitor_id)
     state.current_monitor_idx = monitor_id
 
