@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Terminal as TermIcon, Plus, X } from 'lucide-react';
+import { Terminal as TermIcon } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -125,90 +125,6 @@ export const TerminalPanel = () => {
         className="flex-1 p-2"
         style={{ minHeight: 0 }}
       />
-    </div>
-  );
-};
-      const newIdx = histIdx > 0 ? histIdx - 1 : -1;
-      setHistIdx(newIdx);
-      setInputValue(newIdx >= 0 ? history[history.length - 1 - newIdx] : '');
-    }
-  };
-
-  const activeTabData = tabs.find(t => t.id === activeTab);
-
-  const getLineColor = (type) => {
-    switch (type) {
-      case 'input': return '#FFD43B';
-      case 'error': return '#ef4444';
-      case 'system': return '#06b6d4';
-      default: return '#a1a1aa';
-    }
-  };
-
-  return (
-    <div data-testid="terminal-panel" className="flex flex-col h-full" style={{ background: '#050505' }}>
-      {/* Tab Bar */}
-      <div className="flex items-center h-8 border-b" style={{ borderColor: '#27272a', background: '#0a0a0a' }}>
-        {tabs.map(tab => (
-          <button
-            key={tab.id}
-            data-testid={`terminal-tab-${tab.id}`}
-            onClick={() => setActiveTab(tab.id)}
-            className="flex items-center gap-1.5 px-3 h-full text-xs border-r"
-            style={{
-              borderColor: '#27272a',
-              background: activeTab === tab.id ? '#18181b' : 'transparent',
-              color: activeTab === tab.id ? '#fafafa' : '#52525b',
-            }}
-          >
-            <TermIcon size={11} />
-            {tab.name}
-          </button>
-        ))}
-        <button
-          data-testid="terminal-new-tab-btn"
-          onClick={() => {
-            const id = Date.now();
-            setTabs(prev => [...prev, { id, name: `Terminal ${prev.length + 1}`, lines: [] }]);
-            setActiveTab(id);
-          }}
-          className="flex items-center justify-center w-7 h-full hover:bg-white/5"
-          style={{ color: '#52525b' }}
-        >
-          <Plus size={12} />
-        </button>
-      </div>
-
-      {/* Terminal Content */}
-      <div
-        ref={termRef}
-        className="flex-1 overflow-y-auto p-2 font-mono text-xs leading-5 cursor-text"
-        onClick={() => inputRef.current?.focus()}
-        style={{ background: '#050505' }}
-      >
-        {activeTabData?.lines.map((line, i) => (
-          <div key={i} style={{ color: getLineColor(line.type), whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-            {line.text}
-          </div>
-        ))}
-      </div>
-
-      {/* Input */}
-      <form onSubmit={handleSubmit} className="flex items-center px-2 py-1 border-t" style={{ borderColor: '#1a1a1a' }}>
-        <span className="text-xs font-mono mr-1" style={{ color: '#FFD43B' }}>$</span>
-        <input
-          ref={inputRef}
-          data-testid="terminal-input"
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          className="flex-1 bg-transparent outline-none text-xs font-mono"
-          style={{ color: '#fafafa', caretColor: '#FFD43B' }}
-          placeholder="Enter command..."
-          autoFocus
-        />
-      </form>
     </div>
   );
 };
