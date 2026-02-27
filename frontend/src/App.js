@@ -347,7 +347,7 @@ function App() {
                         />
                       )}
                       {bottomTab === 'terminal' && <TerminalPanel />}
-                      {bottomTab === 'stream' && <StreamPanel />}
+                      {bottomTab === 'stream' && <DesktopPanel />}
                     </div>
                   </div>
                 </Panel>
