@@ -19,12 +19,12 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 
-// Backend API URL with fallback
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
-const API = `${BACKEND_URL}/api`;
+// Use relative URL - works on any domain/port!
+// When deployed, both frontend and backend are on same origin
+const API = '/api';
 
 // Log the API URL for debugging
-console.log('🔗 API URL:', API);
+console.log('🔗 API URL:', API, '(relative - uses current host)');
 
 function App() {
   const [currentCode, setCurrentCode] = useState('');
