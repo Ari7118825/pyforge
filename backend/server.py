@@ -19,6 +19,10 @@ import uuid
 from datetime import datetime, timezone
 import aiosqlite
 
+# Set DISPLAY for pyautogui (Linux)
+if sys.platform != 'win32' and 'DISPLAY' not in os.environ:
+    os.environ['DISPLAY'] = ':0'
+
 # Import desktop streaming router (legacy)
 try:
     from backend.desktop_streaming import desktop_router
