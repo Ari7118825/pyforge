@@ -11,8 +11,8 @@ export const TerminalPanel = () => {
   const termRef = useRef(null);
   const inputRef = useRef(null);
 
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
-  const wsUrl = backendUrl.replace(/^http/, 'ws') + '/api/ws/terminal';
+  // Use current host for WebSocket - works on any domain
+  const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/ws/terminal`;
 
   useEffect(() => {
     const socket = new WebSocket(wsUrl);
