@@ -13,7 +13,12 @@ from typing import Dict, Set
 
 import cv2
 import numpy as np
-import pyautogui
+try:
+    import pyautogui
+    PYAUTOGUI_AVAILABLE = True
+except (ImportError, Exception):
+    PYAUTOGUI_AVAILABLE = False
+    print("[WARN] PyAutoGUI not available - remote control disabled")
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -94,10 +99,13 @@ class UncappedStreamTrack(VideoStreamTrack):
 
         img = frame.copy()
 
-        if self.show_local_cursor:
-            mx, my = pyautogui.position()
-            cv2.circle(img, (int(mx), int(my)), 7, (0, 0, 0), -1, cv2.LINE_AA)
-            cv2.circle(img, (int(mx), int(my)), 5, (0, 0, 255), -1, cv2.LINE_AA)
+        if self.show_local_cursor and PYAUTOGUI_AVAILABLE:
+            try:
+                mx, my = pyautogui.position()
+                cv2.circle(img, (int(mx), int(my)), 7, (0, 0, 0), -1, cv2.LINE_AA)
+                cv2.circle(img, (int(mx), int(my)), 5, (0, 0, 255), -1, cv2.LINE_AA)
+            except Exception:
+                pass
 
         if self.current_scale < 0.99:
             h, w = img.shape[:2]
@@ -147,8 +155,8 @@ class StreamServerState:
                     return
         except:
             pass
-        w, h = pyautogui.size()
-        self.set_monitor_region((0, 0, w, h))
+        # Fallback to 1920x1080
+        self.set_monitor_region((0, 0, 1920, 1080))
 
     def set_monitor_region(self, region):
         if not isinstance(region, (tuple, list)) or len(region) != 4:
@@ -158,55 +166,55 @@ class StreamServerState:
         self.current_monitor_bounds = (left, top, left + width, top + height)
 
     def _process_input(self, data: dict):
+        if not PYAUTOGUI_AVAILABLE:
+            return
+            
         action = data.get("type")
         if not action:
             return
 
-        if action == "mouse_move":
-            x_pct = float(data.get("x_pct", 0))
-            y_pct = float(data.get("y_pct", 0))
-            x_pct = max(0.0, min(1.0, x_pct))
-            y_pct = max(0.0, min(1.0, y_pct))
+        try:
+            if action == "mouse_move":
+                x_pct = float(data.get("x_pct", 0))
+                y_pct = float(data.get("y_pct", 0))
+                x_pct = max(0.0, min(1.0, x_pct))
+                y_pct = max(0.0, min(1.0, y_pct))
 
-            if self.current_monitor_region:
-                left, top, width, height = self.current_monitor_region
-                target_x = left + int(x_pct * width)
-                target_y = top + int(y_pct * height)
-            else:
-                screen_w, screen_h = pyautogui.size()
-                target_x = int(x_pct * screen_w)
-                target_y = int(y_pct * screen_h)
+                if self.current_monitor_region:
+                    left, top, width, height = self.current_monitor_region
+                    target_x = left + int(x_pct * width)
+                    target_y = top + int(y_pct * height)
+                else:
+                    screen_w, screen_h = pyautogui.size()
+                    target_x = int(x_pct * screen_w)
+                    target_y = int(y_pct * screen_h)
 
-            if self.current_monitor_bounds:
-                l, t, r, b = self.current_monitor_bounds
-                target_x = max(l, min(target_x, r - 1))
-                target_y = max(t, min(target_y, b - 1))
+                if self.current_monitor_bounds:
+                    l, t, r, b = self.current_monitor_bounds
+                    target_x = max(l, min(target_x, r - 1))
+                    target_y = max(t, min(target_y, b - 1))
 
-            pyautogui.moveTo(target_x, target_y, duration=0.0, _pause=False)
+                pyautogui.moveTo(target_x, target_y, duration=0.0, _pause=False)
 
-        elif action == "mouse_down":
-            pyautogui.mouseDown(_pause=False)
-        elif action == "mouse_up":
-            pyautogui.mouseUp(_pause=False)
-        elif action == "mouse_click":
-            pyautogui.click(_pause=False)
-        elif action == "mouse_scroll":
-            delta_y = data.get("delta_y", 0)
-            pyautogui.scroll(-int(delta_y / 10))
-        elif action == "key_down":
-            key = data.get("key")
-            if key:
-                try:
+            elif action == "mouse_down":
+                pyautogui.mouseDown(_pause=False)
+            elif action == "mouse_up":
+                pyautogui.mouseUp(_pause=False)
+            elif action == "mouse_click":
+                pyautogui.click(_pause=False)
+            elif action == "mouse_scroll":
+                delta_y = data.get("delta_y", 0)
+                pyautogui.scroll(-int(delta_y / 10))
+            elif action == "key_down":
+                key = data.get("key")
+                if key:
                     pyautogui.keyDown(key, _pause=False)
-                except:
-                    pass
-        elif action == "key_up":
-            key = data.get("key")
-            if key:
-                try:
+            elif action == "key_up":
+                key = data.get("key")
+                if key:
                     pyautogui.keyUp(key, _pause=False)
-                except:
-                    pass
+        except Exception as e:
+            print(f"[Input] Error: {e}")
 
 state = StreamServerState()
 
