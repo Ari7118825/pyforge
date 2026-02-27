@@ -579,95 +579,144 @@ async def ws_terminal(websocket: WebSocket):
     """Real terminal with PTY - works like SSH!"""
     await websocket.accept()
     
-    import pty
-    import select
-    import struct
-    import fcntl
-    import termios
-    
-    # Determine shell based on OS
     if sys.platform == 'win32':
-        # Windows: Use PowerShell
-        shell = ['powershell.exe', '-NoLogo']
-    else:
-        # Linux/Mac: Use bash or sh
-        shell = os.environ.get('SHELL', '/bin/bash')
-        if isinstance(shell, str):
-            shell = [shell]
-    
-    # Fork a PTY
-    pid, fd = pty.fork()
-    
-    if pid == 0:
-        # Child process - execute shell
+        # Windows: Use winpty or ConPTY
         try:
-            os.execvp(shell[0], shell)
-        except Exception:
-            sys.exit(1)
-    
-    # Parent process - relay I/O
-    try:
-        # Set terminal size
-        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
-        
-        # Make fd non-blocking
-        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-        
-        async def read_from_pty():
-            """Read from PTY and send to WebSocket"""
-            loop = asyncio.get_event_loop()
-            while True:
-                try:
-                    # Wait for data
-                    await loop.run_in_executor(None, lambda: select.select([fd], [], [], 0.1))
-                    data = os.read(fd, 4096)
+            import winpty
+            # Use winpty for Windows PTY
+            proc = winpty.PTY(80, 24)
+            proc.spawn('powershell.exe')
+            
+            async def read_from_pty():
+                loop = asyncio.get_event_loop()
+                while True:
+                    try:
+                        data = await loop.run_in_executor(None, proc.read, 4096)
+                        if not data:
+                            break
+                        await websocket.send_text(data)
+                    except Exception as e:
+                        logger.error(f"PTY read error: {e}")
+                        break
+            
+            async def write_to_pty():
+                while True:
+                    try:
+                        data = await websocket.receive_text()
+                        if data.startswith('RESIZE:'):
+                            try:
+                                _, rows, cols = data.split(':')
+                                proc.set_size(int(cols), int(rows))
+                            except Exception:
+                                pass
+                            continue
+                        await asyncio.get_event_loop().run_in_executor(None, proc.write, data)
+                    except WebSocketDisconnect:
+                        break
+                    except Exception as e:
+                        logger.error(f"PTY write error: {e}")
+                        break
+            
+            await asyncio.gather(read_from_pty(), write_to_pty(), return_exceptions=True)
+            proc.close()
+            
+        except ImportError:
+            # Fallback: Use subprocess with PIPE (not ideal but works)
+            proc = await asyncio.create_subprocess_exec(
+                'powershell.exe', '-NoLogo',
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            
+            async def read_output():
+                while True:
+                    data = await proc.stdout.read(4096)
                     if not data:
                         break
                     await websocket.send_text(data.decode('utf-8', errors='replace'))
-                except OSError:
-                    break
-                except Exception as e:
-                    logger.error(f"PTY read error: {e}")
-                    break
+            
+            async def write_input():
+                while True:
+                    try:
+                        data = await websocket.receive_text()
+                        if not data.startswith('RESIZE:'):
+                            proc.stdin.write(data.encode('utf-8'))
+                            await proc.stdin.drain()
+                    except WebSocketDisconnect:
+                        break
+            
+            await asyncio.gather(read_output(), write_input(), return_exceptions=True)
+            proc.kill()
+    else:
+        # Linux/Mac: Use PTY
+        import pty
+        import select
+        import struct
+        import fcntl
+        import termios
         
-        async def write_to_pty():
-            """Read from WebSocket and write to PTY"""
-            while True:
-                try:
-                    data = await websocket.receive_text()
-                    
-                    # Handle terminal resize
-                    if data.startswith('RESIZE:'):
-                        try:
-                            _, rows, cols = data.split(':')
-                            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', int(rows), int(cols), 0, 0))
-                        except Exception:
-                            pass
-                        continue
-                    
-                    # Write data to PTY
-                    os.write(fd, data.encode('utf-8'))
-                except WebSocketDisconnect:
-                    break
-                except Exception as e:
-                    logger.error(f"PTY write error: {e}")
-                    break
+        shell = os.environ.get('SHELL', '/bin/bash')
+        if isinstance(shell, str):
+            shell = [shell]
         
-        # Run both tasks
-        await asyncio.gather(
-            read_from_pty(),
-            write_to_pty(),
-            return_exceptions=True
-        )
-    
-    finally:
+        pid, fd = pty.fork()
+        
+        if pid == 0:
+            # Child process
+            try:
+                os.execvp(shell[0], shell)
+            except Exception:
+                sys.exit(1)
+        
+        # Parent process
         try:
-            os.close(fd)
-            os.kill(pid, signal.SIGTERM)
-            os.waitpid(pid, 0)
-        except Exception:
-            pass
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+            fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+            
+            async def read_from_pty():
+                loop = asyncio.get_event_loop()
+                while True:
+                    try:
+                        await loop.run_in_executor(None, lambda: select.select([fd], [], [], 0.1))
+                        data = os.read(fd, 4096)
+                        if not data:
+                            break
+                        await websocket.send_text(data.decode('utf-8', errors='replace'))
+                    except OSError:
+                        break
+                    except Exception as e:
+                        logger.error(f"PTY read error: {e}")
+                        break
+            
+            async def write_to_pty():
+                while True:
+                    try:
+                        data = await websocket.receive_text()
+                        if data.startswith('RESIZE:'):
+                            try:
+                                _, rows, cols = data.split(':')
+                                fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', int(rows), int(cols), 0, 0))
+                            except Exception:
+                                pass
+                            continue
+                        os.write(fd, data.encode('utf-8'))
+                    except WebSocketDisconnect:
+                        break
+                    except Exception as e:
+                        logger.error(f"PTY write error: {e}")
+                        break
+            
+            await asyncio.gather(read_from_pty(), write_to_pty(), return_exceptions=True)
+        
+        finally:
+            try:
+                os.close(fd)
+                os.kill(pid, signal.SIGTERM)
+                os.waitpid(pid, 0)
+            except Exception:
+                pass
 
 # ─── Include router & middleware ──────────────────────────────────────────────
 
