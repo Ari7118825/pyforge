@@ -730,6 +730,13 @@ async def ws_terminal(websocket: WebSocket):
 
 app.include_router(api_router)
 
+# Include desktop streaming if available
+if DESKTOP_AVAILABLE:
+    app.include_router(desktop_router)
+    logger.info("✅ Desktop streaming enabled")
+else:
+    logger.warning("⚠️  Desktop streaming disabled (dependencies not installed)")
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
