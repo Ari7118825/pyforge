@@ -7,6 +7,7 @@ import { TerminalPanel } from '@/components/TerminalPanel';
 import { CodePreview } from '@/components/CodePreview';
 import { OutputPanel } from '@/components/OutputPanel';
 import { StreamPanel } from '@/components/StreamPanel';
+import { DesktopPanel } from '@/components/DesktopPanel';
 import { PropertiesPanel } from '@/components/PropertiesPanel';
 import { ProjectManager } from '@/components/ProjectManager';
 import { SaveAsModal } from '@/components/SaveAsModal';
