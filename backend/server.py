@@ -430,16 +430,26 @@ async def scan_imports(req: ScanImportsRequest):
                 continue
         
         try:
+            # Limit inspection to prevent timeout on large modules like 'os'
+            member_count = 0
+            max_members = 100
+            
             for name, obj in inspect.getmembers(mod):
                 if name.startswith('_'):
                     continue
                 
+                member_count += 1
+                if member_count > max_members:
+                    break
+                
                 if inspect.isfunction(obj) or inspect.isbuiltin(obj):
+                    if len(mod_info["functions"]) >= 30:
+                        continue
                     func_info = {"name": name, "type": "function"}
                     try:
                         sig = inspect.signature(obj)
                         func_info["params"] = [
-                            p.name for p in sig.parameters.values()
+                            p.name for p in list(sig.parameters.values())[:10]
                             if p.name != 'self'
                         ]
                     except (ValueError, TypeError):
@@ -447,29 +457,28 @@ async def scan_imports(req: ScanImportsRequest):
                     mod_info["functions"].append(func_info)
                 
                 elif inspect.isclass(obj):
+                    if len(mod_info["classes"]) >= 10:
+                        continue
                     cls_info = {"name": name, "type": "class", "methods": []}
+                    method_count = 0
                     for mname, mobj in inspect.getmembers(obj):
                         if mname.startswith('_') and mname != '__init__':
                             continue
                         if callable(mobj):
-                            method_info = {"name": mname}
-                            try:
-                                sig = inspect.signature(mobj)
-                                method_info["params"] = [
-                                    p.name for p in sig.parameters.values()
-                                    if p.name != 'self'
-                                ]
-                            except (ValueError, TypeError):
-                                method_info["params"] = []
+                            method_count += 1
+                            if method_count > 10:
+                                break
+                            method_info = {"name": mname, "params": []}
                             cls_info["methods"].append(method_info)
                     mod_info["classes"].append(cls_info)
                 
                 elif not callable(obj):
-                    mod_info["constants"].append({"name": name, "type": type(obj).__name__})
-            
-            mod_info["functions"] = mod_info["functions"][:40]
-            mod_info["classes"] = mod_info["classes"][:15]
-            mod_info["constants"] = mod_info["constants"][:20]
+                    if len(mod_info["constants"]) >= 15:
+                        continue
+                    try:
+                        mod_info["constants"].append({"name": name, "type": type(obj).__name__})
+                    except Exception:
+                        pass
         except Exception:
             pass
         
