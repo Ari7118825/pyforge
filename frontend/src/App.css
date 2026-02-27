@@ -1,0 +1,246 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --pyforge-bg: #09090b;
+  --pyforge-surface: #18181b;
+  --pyforge-surface-hover: #27272a;
+  --pyforge-border: #27272a;
+  --pyforge-border-active: #3f3f46;
+  --pyforge-amber: #FFD43B;
+  --pyforge-amber-dim: #FFE873;
+  --pyforge-amber-glow: rgba(255, 212, 59, 0.15);
+  --pyforge-cyan: #06b6d4;
+  --pyforge-cyan-dim: #0891b2;
+  --pyforge-cyan-glow: rgba(6, 182, 212, 0.15);
+  --pyforge-red: #ef4444;
+  --pyforge-green: #10b981;
+  --pyforge-text: #fafafa;
+  --pyforge-text-secondary: #a1a1aa;
+  --pyforge-text-tertiary: #52525b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--pyforge-bg);
+  color: var(--pyforge-text);
+  font-family: 'Inter', -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Scrollbar ─────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--pyforge-border-active);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
+/* ─── Blockly Overrides ─────────────────────────────────────────────── */
+
+.blocklySvg {
+  background-color: var(--pyforge-bg) !important;
+}
+
+.blocklyMainBackground {
+  stroke: none !important;
+  fill: var(--pyforge-bg) !important;
+}
+
+.blocklyToolboxDiv {
+  background-color: var(--pyforge-surface) !important;
+  border-right: 1px solid var(--pyforge-border) !important;
+  padding: 4px 0 !important;
+}
+
+.blocklyFlyoutBackground {
+  fill: var(--pyforge-surface) !important;
+  fill-opacity: 0.95 !important;
+}
+
+.blocklyTreeLabel {
+  color: var(--pyforge-text-secondary) !important;
+  font-family: 'Inter', sans-serif !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+}
+
+.blocklyTreeRow {
+  padding: 4px 12px !important;
+  margin: 1px 4px !important;
+  border-radius: 4px !important;
+}
+
+.blocklyTreeRow:hover {
+  background-color: var(--pyforge-surface-hover) !important;
+}
+
+.blocklyTreeSelected .blocklyTreeLabel {
+  color: var(--pyforge-text) !important;
+}
+
+.blocklyTreeSelected {
+  background-color: var(--pyforge-surface-hover) !important;
+}
+
+.blocklyTreeIcon {
+  display: none !important;
+}
+
+.blocklyScrollbarVertical,
+.blocklyScrollbarHorizontal {
+  display: none !important;
+}
+
+.blocklyWidgetDiv {
+  z-index: 999 !important;
+}
+
+.blocklyDropDownDiv {
+  z-index: 999 !important;
+  border-color: var(--pyforge-border) !important;
+  background-color: var(--pyforge-surface) !important;
+}
+
+.blocklyFieldDropdown {
+  border-radius: 4px !important;
+}
+
+.blocklyMinimalBody {
+  background-color: var(--pyforge-surface) !important;
+}
+
+.blocklyZoom > image {
+  opacity: 0.4;
+}
+
+.blocklyZoom > image:hover {
+  opacity: 0.7;
+}
+
+.blocklyTrash {
+  opacity: 0.3;
+}
+
+.blocklyTrash:hover {
+  opacity: 0.6;
+}
+
+/* ─── xterm Terminal Overrides ──────────────────────────────────────── */
+
+.xterm {
+  padding: 8px;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--pyforge-border-active);
+  border-radius: 3px;
+}
+
+/* ─── Panel Resize Handles ──────────────────────────────────────────── */
+
+[data-panel-group-direction="horizontal"] > [data-resize-handle-active] {
+  background-color: var(--pyforge-amber) !important;
+}
+
+[data-panel-group-direction="vertical"] > [data-resize-handle-active] {
+  background-color: var(--pyforge-amber) !important;
+}
+
+/* ─── Animations ────────────────────────────────────────────────────── */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px var(--pyforge-amber-glow); }
+  50% { box-shadow: 0 0 20px var(--pyforge-amber-glow); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+/* ─── Utility ───────────────────────────────────────────────────────── */
+
+.font-heading {
+  font-family: 'Manrope', sans-serif;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.glass {
+  background: rgba(24, 24, 27, 0.8);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.border-glow-amber {
+  box-shadow: 0 0 0 1px var(--pyforge-amber), 0 0 12px var(--pyforge-amber-glow);
+}
+
+.border-glow-cyan {
+  box-shadow: 0 0 0 1px var(--pyforge-cyan), 0 0 12px var(--pyforge-cyan-glow);
+}
+
+/* Status indicator dots */
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-running {
+  background: var(--pyforge-green);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);
+}
+
+.status-stopped {
+  background: var(--pyforge-text-tertiary);
+}
+
+.status-error {
+  background: var(--pyforge-red);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
