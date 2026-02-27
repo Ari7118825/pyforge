@@ -19,13 +19,21 @@ import uuid
 from datetime import datetime, timezone
 import aiosqlite
 
-# Import desktop streaming router
+# Import desktop streaming router (legacy)
 try:
     from backend.desktop_streaming import desktop_router
     DESKTOP_AVAILABLE = True
 except ImportError:
     DESKTOP_AVAILABLE = False
     logging.warning("Desktop streaming not available - install: pip install aiortc mss numpy pillow pyautogui av")
+
+# Import new stream server
+try:
+    from backend.stream_server import stream_router
+    STREAM_AVAILABLE = True
+except ImportError:
+    STREAM_AVAILABLE = False
+    logging.warning("Stream server not available")
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -778,12 +786,17 @@ logger = logging.getLogger(__name__)
 
 app.include_router(api_router)
 
-# Include desktop streaming if available
+# Include desktop streaming if available (legacy)
 if DESKTOP_AVAILABLE:
     app.include_router(desktop_router)
-    logger.info("✅ Desktop streaming enabled")
+    logger.info("✅ Desktop streaming enabled (legacy)")
 else:
     logger.warning("⚠️  Desktop streaming disabled (dependencies not installed)")
+
+# Include new stream server
+if STREAM_AVAILABLE:
+    app.include_router(stream_router)
+    logger.info("✅ Stream server enabled")
 
 @app.on_event("startup")
 async def startup_db():
