@@ -19,7 +19,12 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+// Backend API URL with fallback
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+const API = `${BACKEND_URL}/api`;
+
+// Log the API URL for debugging
+console.log('🔗 API URL:', API);
 
 function App() {
   const [currentCode, setCurrentCode] = useState('');
