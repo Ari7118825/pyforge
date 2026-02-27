@@ -726,17 +726,6 @@ async def ws_terminal(websocket: WebSocket):
             except Exception:
                 pass
 
-# ─── Include router & middleware ──────────────────────────────────────────────
-
-app.include_router(api_router)
-
-# Include desktop streaming if available
-if DESKTOP_AVAILABLE:
-    app.include_router(desktop_router)
-    logger.info("✅ Desktop streaming enabled")
-else:
-    logger.warning("⚠️  Desktop streaming disabled (dependencies not installed)")
-
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -750,6 +739,17 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# ─── Include router & middleware ──────────────────────────────────────────────
+
+app.include_router(api_router)
+
+# Include desktop streaming if available
+if DESKTOP_AVAILABLE:
+    app.include_router(desktop_router)
+    logger.info("✅ Desktop streaming enabled")
+else:
+    logger.warning("⚠️  Desktop streaming disabled (dependencies not installed)")
 
 @app.on_event("startup")
 async def startup_db():
