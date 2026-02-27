@@ -124,7 +124,7 @@ class UncappedStreamTrack(VideoStreamTrack):
 class StreamServerState:
     def __init__(self):
         self.pcs: Set[RTCPeerConnection] = set()
-        self.camera = mss.mss()  # Always use mss on Linux
+        self.camera = None  # Lazy init when needed
         self.track = None
         self.current_monitor_idx = 0
         
@@ -257,7 +257,11 @@ async def handle_offer(data: dict):
     state.pcs.add(pc)
     
     if state.camera is None:
-        state.camera = mss.mss()
+        try:
+            state.camera = mss.mss()
+        except Exception as e:
+            print(f"[Stream] Failed to init screen capture: {e}")
+            return {"error": f"Screen capture not available: {str(e)}"}, 500
     
     if state.track is None:
         state.track = UncappedStreamTrack(state.camera, state.current_monitor_idx)
