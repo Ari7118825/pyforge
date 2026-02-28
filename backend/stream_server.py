@@ -1,7 +1,7 @@
 """
 Integrated Desktop Streaming Server for PyForge
-Based on stream.py - provides WebRTC video, audio, and remote control
-Integrated into FastAPI backend
+Based on original stream.py - Windows ONLY
+Uses bettercam for high-performance capture
 """
 
 import asyncio
@@ -13,32 +13,20 @@ from typing import Dict, Set
 
 import cv2
 import numpy as np
-try:
-    import pyautogui
-    PYAUTOGUI_AVAILABLE = True
-except (ImportError, Exception):
-    PYAUTOGUI_AVAILABLE = False
-    print("[WARN] PyAutoGUI not available - remote control disabled")
+import bettercam
+import pyautogui
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-# Import with fallbacks
-BETTERCAM_AVAILABLE = False  # Not available on Linux
-import mss
+# Audio
+import pyaudiowpatch as pyaudio
 
-try:
-    import pyaudiowpatch as pyaudio
-    AUDIO_AVAILABLE = True
-except ImportError:
-    AUDIO_AVAILABLE = False
-
+# Monitor detection
 try:
     from screeninfo import get_monitors
-    SCREENINFO_AVAILABLE = True
 except ImportError:
-    SCREENINFO_AVAILABLE = False
     def get_monitors():
         return []
 
@@ -46,7 +34,7 @@ except ImportError:
 stream_router = APIRouter(prefix="/api/stream")
 
 # ----------------------------------------------------------------------
-# Video track
+# Video track (ORIGINAL from stream.py)
 # ----------------------------------------------------------------------
 class UncappedStreamTrack(VideoStreamTrack):
     def __init__(self, camera, monitor_idx=0):
@@ -76,11 +64,7 @@ class UncappedStreamTrack(VideoStreamTrack):
     def _capture_loop(self):
         while self._running:
             try:
-                # Use mss for screen capture (cross-platform)
-                monitor = self.camera.monitors[self.monitor_idx + 1]  # +1 because monitors[0] is all monitors
-                screenshot = self.camera.grab(monitor)
-                frame = np.array(screenshot)[:, :, :3]  # Convert BGRA to BGR
-                    
+                frame = self.camera.get_latest_frame()
                 if frame is not None:
                     self._latest_frame = frame
             except Exception as e:
@@ -99,13 +83,12 @@ class UncappedStreamTrack(VideoStreamTrack):
 
         img = frame.copy()
 
-        if self.show_local_cursor and PYAUTOGUI_AVAILABLE:
-            try:
-                mx, my = pyautogui.position()
-                cv2.circle(img, (int(mx), int(my)), 7, (0, 0, 0), -1, cv2.LINE_AA)
-                cv2.circle(img, (int(mx), int(my)), 5, (0, 0, 255), -1, cv2.LINE_AA)
-            except Exception:
-                pass
+        # Only draw local cursor when remote control is NOT active
+        if self.show_local_cursor:
+            mx, my = pyautogui.position()
+            # Simple absolute cursor draw (whole desktop coords)
+            cv2.circle(img, (int(mx), int(my)), 7, (0, 0, 0), -1, cv2.LINE_AA)
+            cv2.circle(img, (int(mx), int(my)), 5, (0, 0, 255), -1, cv2.LINE_AA)
 
         if self.current_scale < 0.99:
             h, w = img.shape[:2]
@@ -124,7 +107,7 @@ class UncappedStreamTrack(VideoStreamTrack):
 class StreamServerState:
     def __init__(self):
         self.pcs: Set[RTCPeerConnection] = set()
-        self.camera = None  # Lazy init when needed
+        self.camera = None
         self.track = None
         self.current_monitor_idx = 0
         
@@ -134,9 +117,8 @@ class StreamServerState:
         self.desktop_clients: Set[WebSocket] = set()
         
         # Audio
-        if AUDIO_AVAILABLE:
-            self.mic_p = pyaudio.PyAudio()
-            self.desktop_p = pyaudio.PyAudio()
+        self.mic_p = pyaudio.PyAudio()
+        self.desktop_p = pyaudio.PyAudio()
         self.mic_running = False
         self.desktop_running = False
         
@@ -144,77 +126,199 @@ class StreamServerState:
         self.current_monitor_region = None
         self.current_monitor_bounds = None
         self._update_default_monitor()
+        
+        # Start audio threads
+        self._start_audio_threads()
 
     def _update_default_monitor(self):
+        """Fallback to primary monitor if no region is set yet"""
         try:
-            if SCREENINFO_AVAILABLE:
-                monitors = get_monitors()
-                primary = next((m for m in monitors if m.x == 0 and m.y == 0), monitors[0] if monitors else None)
-                if primary:
-                    self.set_monitor_region((primary.x, primary.y, primary.width, primary.height))
-                    return
+            monitors = get_monitors()
+            primary = next((m for m in monitors if m.x == 0 and m.y == 0), monitors[0] if monitors else None)
+            if primary:
+                self.set_monitor_region((primary.x, primary.y, primary.width, primary.height))
+            else:
+                w, h = pyautogui.size()
+                self.set_monitor_region((0, 0, w, h))
         except:
-            pass
-        # Fallback to 1920x1080
-        self.set_monitor_region((0, 0, 1920, 1080))
+            w, h = pyautogui.size()
+            self.set_monitor_region((0, 0, w, h))
 
     def set_monitor_region(self, region):
+        """
+        Set the current monitor region for mouse coordinate mapping.
+        region = (left, top, width, height)
+        """
         if not isinstance(region, (tuple, list)) or len(region) != 4:
+            print("[Control] Invalid region format - ignoring")
             return
+
         left, top, width, height = map(int, region)
         self.current_monitor_region = (left, top, width, height)
         self.current_monitor_bounds = (left, top, left + width, top + height)
+        print(f"[Control] Mouse control now mapped to monitor region: {self.current_monitor_bounds}")
 
     def _process_input(self, data: dict):
-        if not PYAUTOGUI_AVAILABLE:
-            return
-            
         action = data.get("type")
         if not action:
             return
 
-        try:
-            if action == "mouse_move":
-                x_pct = float(data.get("x_pct", 0))
-                y_pct = float(data.get("y_pct", 0))
-                x_pct = max(0.0, min(1.0, x_pct))
-                y_pct = max(0.0, min(1.0, y_pct))
+        if action == "mouse_move":
+            x_pct = float(data.get("x_pct", 0))
+            y_pct = float(data.get("y_pct", 0))
+            x_pct = max(0.0, min(1.0, x_pct))
+            y_pct = max(0.0, min(1.0, y_pct))
 
-                if self.current_monitor_region:
-                    left, top, width, height = self.current_monitor_region
-                    target_x = left + int(x_pct * width)
-                    target_y = top + int(y_pct * height)
-                else:
-                    screen_w, screen_h = pyautogui.size()
-                    target_x = int(x_pct * screen_w)
-                    target_y = int(y_pct * screen_h)
+            if self.current_monitor_region:
+                left, top, width, height = self.current_monitor_region
+                target_x = left + int(x_pct * width)
+                target_y = top + int(y_pct * height)
+            else:
+                screen_w, screen_h = pyautogui.size()
+                target_x = int(x_pct * screen_w)
+                target_y = int(y_pct * screen_h)
 
-                if self.current_monitor_bounds:
-                    l, t, r, b = self.current_monitor_bounds
-                    target_x = max(l, min(target_x, r - 1))
-                    target_y = max(t, min(target_y, b - 1))
+            # Clamp to monitor bounds
+            if self.current_monitor_bounds:
+                l, t, r, b = self.current_monitor_bounds
+                target_x = max(l, min(target_x, r - 1))
+                target_y = max(t, min(target_y, b - 1))
 
-                pyautogui.moveTo(target_x, target_y, duration=0.0, _pause=False)
+            pyautogui.moveTo(target_x, target_y, duration=0.0, _pause=False)
 
-            elif action == "mouse_down":
-                pyautogui.mouseDown(_pause=False)
-            elif action == "mouse_up":
-                pyautogui.mouseUp(_pause=False)
-            elif action == "mouse_click":
-                pyautogui.click(_pause=False)
-            elif action == "mouse_scroll":
-                delta_y = data.get("delta_y", 0)
-                pyautogui.scroll(-int(delta_y / 10))
-            elif action == "key_down":
-                key = data.get("key")
-                if key:
+        elif action == "mouse_down":
+            pyautogui.mouseDown(_pause=False)
+
+        elif action == "mouse_up":
+            pyautogui.mouseUp(_pause=False)
+
+        elif action == "mouse_click":
+            pyautogui.click(_pause=False)
+
+        elif action == "mouse_scroll":
+            delta_y = data.get("delta_y", 0)
+            pyautogui.scroll(-int(delta_y / 10))
+
+        elif action == "key_down":
+            key = data.get("key")
+            if key:
+                try:
                     pyautogui.keyDown(key, _pause=False)
-            elif action == "key_up":
-                key = data.get("key")
-                if key:
+                except:
+                    pass
+
+        elif action == "key_up":
+            key = data.get("key")
+            if key:
+                try:
                     pyautogui.keyUp(key, _pause=False)
+                except:
+                    pass
+
+    def _start_audio_threads(self):
+        """Start microphone and desktop audio capture threads"""
+        threading.Thread(target=self.mic_capture_loop, daemon=True).start()
+        threading.Thread(target=self.desktop_capture_loop, daemon=True).start()
+
+    def mic_capture_loop(self):
+        FORMAT, CHUNK, TARGET_RATE = pyaudio.paInt16, 1024, 48000
+        try:
+            wasapi_info = self.mic_p.get_host_api_info_by_type(pyaudio.paWASAPI)
+            mic = self.mic_p.get_device_info_by_index(wasapi_info["defaultInputDevice"])
+            dev_rate = int(mic['defaultSampleRate'])
+            dev_channels = mic["maxInputChannels"]
         except Exception as e:
-            print(f"[Input] Error: {e}")
+            print(f"[Mic] Could not get default microphone: {e}")
+            return
+
+        stream = self.mic_p.open(format=FORMAT, channels=dev_channels, rate=dev_rate,
+                                 input=True, input_device_index=mic["index"],
+                                 frames_per_buffer=CHUNK)
+
+        while True:
+            if not self.mic_running:
+                time.sleep(0.1)
+                continue
+                
+            try:
+                raw_bytes = stream.read(CHUNK, exception_on_overflow=False)
+                audio_np = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32).reshape(-1, dev_channels)
+
+                if dev_channels == 1:
+                    audio_np = np.repeat(audio_np, 2, axis=1)
+
+                if dev_rate != TARGET_RATE:
+                    num_samples = int(len(audio_np) * TARGET_RATE / dev_rate)
+                    audio_np = np.array([np.interp(np.linspace(0, len(audio_np), num_samples),
+                                        np.arange(len(audio_np)), audio_np[:, c]) for c in range(2)]).T
+
+                final_data = np.clip(audio_np.flatten(), -32768, 32767).astype(np.int16).tobytes()
+                
+                # Send to all connected mic clients
+                for client in list(self.mic_clients):
+                    try:
+                        asyncio.run(client.send_bytes(final_data))
+                    except:
+                        pass
+            except Exception as e:
+                print(f"[Mic] Capture error: {e}")
+                time.sleep(0.1)
+
+    def desktop_capture_loop(self):
+        FORMAT, CHUNK, TARGET_RATE = pyaudio.paInt16, 512, 48000
+        # Find loopback device
+        try:
+            wasapi_info = self.desktop_p.get_host_api_info_by_type(pyaudio.paWASAPI)
+            default_speakers = self.desktop_p.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
+            loopback = None
+            for lb in self.desktop_p.get_loopback_device_info_generator():
+                if default_speakers["name"] in lb["name"]:
+                    loopback = lb
+                    break
+            if not loopback:
+                print("[Desktop] No loopback device found.")
+                return
+        except Exception as e:
+            print(f"[Desktop] Error finding loopback: {e}")
+            return
+
+        dev_rate = int(loopback['defaultSampleRate'])
+        dev_channels = loopback["maxInputChannels"]
+
+        stream = self.desktop_p.open(format=FORMAT, channels=dev_channels, rate=dev_rate,
+                                     input=True, input_device_index=loopback["index"],
+                                     frames_per_buffer=CHUNK)
+
+        while True:
+            if not self.desktop_running:
+                time.sleep(0.1)
+                continue
+                
+            try:
+                raw_bytes = stream.read(CHUNK, exception_on_overflow=False)
+                audio_np = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32).reshape(-1, dev_channels)
+
+                if dev_channels == 1:
+                    audio_np = np.repeat(audio_np, 2, axis=1)
+                elif dev_channels > 2:
+                    audio_np = audio_np[:, :2]
+
+                if dev_rate != TARGET_RATE:
+                    num_samples = int(len(audio_np) * TARGET_RATE / dev_rate)
+                    audio_np = np.array([np.interp(np.linspace(0, len(audio_np), num_samples),
+                                        np.arange(len(audio_np)), audio_np[:, c]) for c in range(2)]).T
+
+                final_data = np.clip(audio_np.flatten(), -32768, 32767).astype(np.int16).tobytes()
+                
+                # Send to all connected desktop audio clients
+                for client in list(self.desktop_clients):
+                    try:
+                        asyncio.run(client.send_bytes(final_data))
+                    except:
+                        pass
+            except Exception as e:
+                print(f"[Desktop] Capture error: {e}")
+                time.sleep(0.1)
 
 state = StreamServerState()
 
@@ -225,23 +329,19 @@ state = StreamServerState()
 @stream_router.get("/monitors")
 async def get_monitors_list():
     """Get available monitors"""
-    if SCREENINFO_AVAILABLE:
-        monitors = get_monitors()
-        data = []
-        for i, mon in enumerate(monitors):
-            name = getattr(mon, 'name', f"Monitor {i+1}")
-            if hasattr(mon, 'is_primary') and mon.is_primary:
-                name += " (Primary)"
-            data.append({
-                "id": i,
-                "name": name,
-                "width": mon.width,
-                "height": mon.height
-            })
-        return data
-    else:
-        # Fallback
-        return [{"id": 0, "name": "Primary Monitor", "width": 1920, "height": 1080}]
+    monitors = get_monitors()
+    data = []
+    for i, mon in enumerate(monitors):
+        name = getattr(mon, 'name', f"Monitor {i+1}")
+        if hasattr(mon, 'is_primary') and mon.is_primary:
+            name += " (Primary)"
+        data.append({
+            "id": i,
+            "name": name,
+            "width": mon.width,
+            "height": mon.height
+        })
+    return data
 
 @stream_router.post("/offer")
 async def handle_offer(data: dict):
@@ -257,11 +357,8 @@ async def handle_offer(data: dict):
     state.pcs.add(pc)
     
     if state.camera is None:
-        try:
-            state.camera = mss.mss()
-        except Exception as e:
-            print(f"[Stream] Failed to init screen capture: {e}")
-            return {"error": f"Screen capture not available: {str(e)}"}, 500
+        state.camera = bettercam.create(output_idx=state.current_monitor_idx, output_color="BGR")
+        state.camera.start(target_fps=0)
     
     if state.track is None:
         state.track = UncappedStreamTrack(state.camera, state.current_monitor_idx)
@@ -278,26 +375,41 @@ async def handle_offer(data: dict):
 
 async def set_monitor_and_recreate(monitor_id: int):
     """Switch monitor"""
+    print(f"[Monitor Switch] Changing to output_idx {monitor_id}")
+    
+    # Destroy old
     if state.track:
         state.track.stop()
+        del state.track
         state.track = None
-    
-    # mss doesn't need to be recreated, just update track
-    await asyncio.sleep(0.2)
+
+    if state.camera:
+        try:
+            state.camera.stop()
+        except:
+            pass
+        del state.camera
+        state.camera = None
+        await asyncio.sleep(0.5)
+
+    # Create new with output_idx
+    state.camera = bettercam.create(output_idx=monitor_id, output_color="BGR")
+    state.camera.start(target_fps=0)
     state.track = UncappedStreamTrack(state.camera, monitor_id)
     state.current_monitor_idx = monitor_id
+
+    print(f"[Monitor Switch] Successfully switched to output_idx {monitor_id}")
 
 @stream_router.post("/set_monitor_region")
 async def set_monitor_region_route(data: dict):
     """Set monitor region for mouse control"""
     monitor_id = data.get('monitor_id')
-    if SCREENINFO_AVAILABLE:
-        monitors = get_monitors()
-        if 0 <= monitor_id < len(monitors):
-            mon = monitors[monitor_id]
-            region = (mon.x, mon.y, mon.width, mon.height)
-            state.set_monitor_region(region)
-            return {"status": "ok"}
+    monitors = get_monitors()
+    if 0 <= monitor_id < len(monitors):
+        mon = monitors[monitor_id]
+        region = (mon.x, mon.y, mon.width, mon.height)
+        state.set_monitor_region(region)
+        return {"status": "ok"}
     return {"status": "error"}
 
 @stream_router.post("/config")
@@ -322,13 +434,13 @@ async def control_websocket(websocket: WebSocket):
     await websocket.accept()
     state.control_clients.add(websocket)
     try:
-        async for msg in websocket:
-            if msg.get("type") == "text":
-                try:
-                    data = json.loads(msg.get("text"))
-                    state._process_input(data)
-                except Exception as e:
-                    print(f"Control input error: {e}")
+        while True:
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                state._process_input(msg)
+            except Exception as e:
+                print(f"Control input error: {e}")
     except WebSocketDisconnect:
         pass
     finally:
@@ -338,23 +450,33 @@ async def control_websocket(websocket: WebSocket):
 async def mic_audio_websocket(websocket: WebSocket):
     await websocket.accept()
     state.mic_clients.add(websocket)
+    state.mic_running = True
     try:
-        await websocket.receive_text()
+        # Keep connection open
+        while True:
+            await websocket.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
         state.mic_clients.discard(websocket)
+        if len(state.mic_clients) == 0:
+            state.mic_running = False
 
 @stream_router.websocket("/desktop_audio")
 async def desktop_audio_websocket(websocket: WebSocket):
     await websocket.accept()
     state.desktop_clients.add(websocket)
+    state.desktop_running = True
     try:
-        await websocket.receive_text()
+        # Keep connection open
+        while True:
+            await websocket.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
         state.desktop_clients.discard(websocket)
+        if len(state.desktop_clients) == 0:
+            state.desktop_running = False
 
 # Standalone HTML page
 @stream_router.get("/viewer")
