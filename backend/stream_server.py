@@ -127,8 +127,15 @@ class StreamServerState:
         self.current_monitor_bounds = None
         self._update_default_monitor()
         
+        # Event loop for async operations from threads
+        self.loop = None
+        
         # Start audio threads
         self._start_audio_threads()
+        
+    def set_loop(self, loop):
+        """Set the event loop for thread-safe async operations"""
+        self.loop = loop
 
     def _update_default_monitor(self):
         """Fallback to primary monitor if no region is set yet"""
@@ -254,13 +261,16 @@ class StreamServerState:
 
                 final_data = np.clip(audio_np.flatten(), -32768, 32767).astype(np.int16).tobytes()
                 
-                # Send to all connected mic clients (async-safe)
-                if self.mic_clients:
+                # Send to all connected mic clients (thread-safe)
+                if self.mic_clients and self.loop:
                     for client in list(self.mic_clients):
                         try:
-                            asyncio.create_task(client.send_bytes(final_data))
-                        except:
-                            self.mic_clients.discard(client)
+                            asyncio.run_coroutine_threadsafe(
+                                client.send_bytes(final_data),
+                                self.loop
+                            )
+                        except Exception as e:
+                            pass
             except Exception as e:
                 print(f"[Mic] Capture error: {e}")
                 time.sleep(0.1)
@@ -311,13 +321,16 @@ class StreamServerState:
 
                 final_data = np.clip(audio_np.flatten(), -32768, 32767).astype(np.int16).tobytes()
                 
-                # Send to all connected desktop audio clients (async-safe)
-                if self.desktop_clients:
+                # Send to all connected desktop audio clients (thread-safe)
+                if self.desktop_clients and self.loop:
                     for client in list(self.desktop_clients):
                         try:
-                            asyncio.create_task(client.send_bytes(final_data))
-                        except:
-                            self.desktop_clients.discard(client)
+                            asyncio.run_coroutine_threadsafe(
+                                client.send_bytes(final_data),
+                                self.loop
+                            )
+                        except Exception as e:
+                            pass
             except Exception as e:
                 print(f"[Desktop] Capture error: {e}")
                 time.sleep(0.1)
@@ -348,6 +361,9 @@ async def get_monitors_list():
 @stream_router.post("/offer")
 async def handle_offer(data: dict):
     """Handle WebRTC offer"""
+    # Set event loop for audio threads
+    state.set_loop(asyncio.get_event_loop())
+    
     sdp = data.get("sdp")
     sdp_type = data.get("type")
     monitor_id = data.get("monitor_id", 0)
