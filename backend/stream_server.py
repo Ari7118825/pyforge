@@ -254,12 +254,13 @@ class StreamServerState:
 
                 final_data = np.clip(audio_np.flatten(), -32768, 32767).astype(np.int16).tobytes()
                 
-                # Send to all connected mic clients
-                for client in list(self.mic_clients):
-                    try:
-                        asyncio.run(client.send_bytes(final_data))
-                    except:
-                        pass
+                # Send to all connected mic clients (async-safe)
+                if self.mic_clients:
+                    for client in list(self.mic_clients):
+                        try:
+                            asyncio.create_task(client.send_bytes(final_data))
+                        except:
+                            self.mic_clients.discard(client)
             except Exception as e:
                 print(f"[Mic] Capture error: {e}")
                 time.sleep(0.1)
@@ -310,12 +311,13 @@ class StreamServerState:
 
                 final_data = np.clip(audio_np.flatten(), -32768, 32767).astype(np.int16).tobytes()
                 
-                # Send to all connected desktop audio clients
-                for client in list(self.desktop_clients):
-                    try:
-                        asyncio.run(client.send_bytes(final_data))
-                    except:
-                        pass
+                # Send to all connected desktop audio clients (async-safe)
+                if self.desktop_clients:
+                    for client in list(self.desktop_clients):
+                        try:
+                            asyncio.create_task(client.send_bytes(final_data))
+                        except:
+                            self.desktop_clients.discard(client)
             except Exception as e:
                 print(f"[Desktop] Capture error: {e}")
                 time.sleep(0.1)
